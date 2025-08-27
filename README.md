@@ -26,10 +26,10 @@
 
 ```bash
 # 下载脚本
-wget https://raw.githubusercontent.com/your-username/triliumnext-docker-installer/main/trilium-install.sh
+wget https://raw.githubusercontent.com/LaoNaLikeMeat/triliumnext-docker-installer/main/trilium-install.sh
 
 # 或使用 curl
-curl -O https://raw.githubusercontent.com/your-username/triliumnext-docker-installer/main/trilium-install.sh
+curl -O https://raw.githubusercontent.com/LaoNaLikeMeat/triliumnext-docker-installer/main/trilium-install.sh
 
 # 设置执行权限
 chmod +x trilium-install.sh
@@ -258,7 +258,7 @@ docker-compose logs nginx
 ### 开发环境
 
 ```bash
-git clone https://github.com/your-username/triliumnext-docker-installer.git
+git clone https://github.com/LaoNaLikeMeat/triliumnext-docker-installer.git
 cd triliumnext-docker-installer
 ```
 
@@ -282,7 +282,7 @@ MIT License - 详见 [LICENSE](LICENSE) 文件。
 
 ## 支持
 
-* [GitHub Issues](https://github.com/your-username/triliumnext-docker-installer/issues)
+* [GitHub Issues](https://github.com/LaoNaLikeMeat/triliumnext-docker-installer/issues)
 * [TriliumNext 官方文档](https://github.com/TriliumNext/Notes/wiki)
 * [Docker 官方文档](https://docs.docker.com/)
 
@@ -294,7 +294,4 @@ MIT License - 详见 [LICENSE](LICENSE) 文件。
 * [Docker Hub - TriliumNext](https://hub.docker.com/r/triliumnext/notes) - 官方镜像
 * [Cloudflare](https://www.cloudflare.com/) - SSL 证书服务
 * [Let's Encrypt](https://letsencrypt.org/) - 免费 SSL 证书
-
-
-
 
