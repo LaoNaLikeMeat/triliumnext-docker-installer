@@ -223,13 +223,14 @@ show_management_panel() {
     echo -e "${WHITE}6)${NC} 智能更新Trilium版本"
     echo -e "${WHITE}7)${NC} 备份数据"
     echo -e "${WHITE}8)${NC} 恢复数据"
-    echo -e "${WHITE}9)${NC} 重新配置/重新安装"
-    echo -e "${WHITE}10)${NC} 完全卸载Trilium"
+    echo -e "${WHITE}9)${NC} 更新安装脚本"
+    echo -e "${WHITE}10)${NC} 重新配置/重新安装"
+    echo -e "${WHITE}11)${NC} 完全卸载Trilium"
     echo -e "${WHITE}0)${NC} 退出"
     echo
     
     while true; do
-        read -p "请选择操作 (0-10): " choice
+        read -p "请选择操作 (0-11): " choice
         
         case $choice in
             1)
@@ -265,6 +266,10 @@ show_management_panel() {
                 break
                 ;;
             9)
+                update_script
+                break
+                ;;
+            10)
                 echo
                 echo -e "${YELLOW}警告: 这将重新配置Trilium，现有配置将被覆盖！${NC}"
                 read -p "确认继续重新安装? (y/N): " confirm
@@ -275,7 +280,7 @@ show_management_panel() {
                     return 0
                 fi
                 ;;
-            10)
+            11)
                 uninstall_trilium
                 break
                 ;;
@@ -285,10 +290,193 @@ show_management_panel() {
                 exit 0
                 ;;
             *)
-                error "无效选择，请输入0-10"
+                error "无效选择，请输入0-11"
                 ;;
         esac
     done
+}
+
+# 脚本更新功能
+update_script() {
+    echo
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${WHITE}                     脚本更新功能                            ${CYAN}║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    
+    # 脚本信息
+    SCRIPT_NAME=$(basename "$0")
+    SCRIPT_PATH=$(realpath "$0")
+    CURRENT_VERSION="v2.0-optimized"
+    
+    # 检查更新源
+    echo "请选择更新源:"
+    echo -e "${WHITE}1)${NC} GitHub官方源 (推荐)"
+    echo -e "${WHITE}2)${NC} 自定义URL"
+    echo -e "${WHITE}0)${NC} 取消更新"
+    echo
+    
+    while true; do
+        read -p "请选择 (0-2): " update_choice
+        
+        case $update_choice in
+            1)
+                UPDATE_URL="https://raw.githubusercontent.com/LaoNaLikeMeat/triliumnext-docker-installer/main/trilium-install.sh"
+                break
+                ;;
+            2)
+                read -p "请输入自定义更新URL: " UPDATE_URL
+                if [[ -z "$UPDATE_URL" ]]; then
+                    error "URL不能为空"
+                    continue
+                fi
+                break
+                ;;
+            0)
+                info "更新已取消"
+                return 0
+                ;;
+            *)
+                error "无效选择，请输入0-2"
+                ;;
+        esac
+    done
+    
+    info "检查网络连接..."
+    if ! ping -c 1 github.com &> /dev/null && ! ping -c 1 8.8.8.8 &> /dev/null; then
+        error "网络连接失败，无法更新脚本"
+        return 1
+    fi
+    
+    info "当前脚本版本: $CURRENT_VERSION"
+    info "当前脚本路径: $SCRIPT_PATH"
+    
+    # 创建临时目录
+    TEMP_DIR=$(mktemp -d)
+    TEMP_SCRIPT="$TEMP_DIR/trilium-install-new.sh"
+    
+    info "下载最新版本脚本..."
+    if command -v wget &> /dev/null; then
+        if ! wget -q "$UPDATE_URL" -O "$TEMP_SCRIPT"; then
+            error "下载失败，请检查网络连接或URL"
+            rm -rf "$TEMP_DIR"
+            return 1
+        fi
+    elif command -v curl &> /dev/null; then
+        if ! curl -s "$UPDATE_URL" -o "$TEMP_SCRIPT"; then
+            error "下载失败，请检查网络连接或URL"
+            rm -rf "$TEMP_DIR"
+            return 1
+        fi
+    else
+        error "系统缺少 wget 或 curl 工具"
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
+    
+    # 验证下载的脚本
+    if [[ ! -s "$TEMP_SCRIPT" ]]; then
+        error "下载的脚本文件为空或无效"
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
+    
+    # 检查脚本语法
+    if ! bash -n "$TEMP_SCRIPT" 2>/dev/null; then
+        error "下载的脚本语法错误，可能损坏"
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
+    
+    # 显示更新信息
+    echo
+    info "脚本下载成功，准备更新..."
+    
+    # 获取新版本信息（如果有的话）
+    NEW_VERSION=$(grep "CURRENT_VERSION=" "$TEMP_SCRIPT" 2>/dev/null | head -1 | cut -d'"' -f2 || echo "未知版本")
+    if [[ "$NEW_VERSION" != "未知版本" ]]; then
+        info "新版本: $NEW_VERSION"
+        
+        if [[ "$NEW_VERSION" == "$CURRENT_VERSION" ]]; then
+            echo
+            warning "当前已是最新版本！"
+            read -p "是否强制更新? (y/N): " force_update
+            if [[ ! "$force_update" =~ ^[Yy]$ ]]; then
+                info "更新已取消"
+                rm -rf "$TEMP_DIR"
+                return 0
+            fi
+        fi
+    fi
+    
+    # 显示更新前后差异（可选）
+    echo
+    read -p "是否查看脚本更新内容差异? (y/N): " show_diff
+    if [[ "$show_diff" =~ ^[Yy]$ ]]; then
+        if command -v diff &> /dev/null; then
+            echo
+            echo -e "${YELLOW}=== 脚本差异对比 ===${NC}"
+            diff -u "$SCRIPT_PATH" "$TEMP_SCRIPT" || true
+            echo
+            read -p "按回车键继续..."
+        else
+            warning "系统未安装 diff 工具，跳过差异对比"
+        fi
+    fi
+    
+    # 确认更新
+    echo
+    echo -e "${YELLOW}准备更新脚本:${NC}"
+    echo "• 当前脚本: $SCRIPT_PATH"
+    echo "• 当前版本: $CURRENT_VERSION"
+    echo "• 新版本: $NEW_VERSION"
+    echo
+    echo -e "${RED}注意: 更新将覆盖当前脚本文件！${NC}"
+    read -p "确认更新? (y/N): " confirm_update
+    
+    if [[ ! "$confirm_update" =~ ^[Yy]$ ]]; then
+        info "更新已取消"
+        rm -rf "$TEMP_DIR"
+        return 0
+    fi
+    
+    # 备份当前脚本
+    BACKUP_PATH="${SCRIPT_PATH}.backup.$(date +%Y%m%d_%H%M%S)"
+    info "备份当前脚本到: $BACKUP_PATH"
+    cp "$SCRIPT_PATH" "$BACKUP_PATH"
+    
+    # 更新脚本
+    info "正在更新脚本..."
+    if cp "$TEMP_SCRIPT" "$SCRIPT_PATH"; then
+        chmod +x "$SCRIPT_PATH"
+        success "脚本更新成功！"
+        
+        echo
+        echo -e "${WHITE}更新详情:${NC}"
+        echo "• 新脚本路径: $SCRIPT_PATH"
+        echo "• 备份路径: $BACKUP_PATH"
+        echo "• 更新时间: $(date)"
+        
+        # 清理临时文件
+        rm -rf "$TEMP_DIR"
+        
+        echo
+        echo -e "${GREEN}脚本已更新到最新版本！${NC}"
+        read -p "是否立即重启脚本以使用新版本? (Y/n): " restart_script
+        
+        if [[ ! "$restart_script" =~ ^[Nn]$ ]]; then
+            info "重启脚本中..."
+            echo
+            exec "$SCRIPT_PATH"
+        else
+            info "请手动重新运行脚本以使用新功能"
+        fi
+    else
+        error "脚本更新失败！"
+        info "已保留备份文件: $BACKUP_PATH"
+        rm -rf "$TEMP_DIR"
+        return 1
+    fi
 }
 
 # 智能更新函数 - 包含错误修复
