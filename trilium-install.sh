@@ -353,7 +353,7 @@ update_script() {
     
     # 创建临时目录
     TEMP_DIR=$(mktemp -d)
-    TEMP_SCRIPT="$TEMP_DIR/trilium-install-new.sh"
+    TEMP_SCRIPT="$TEMP_DIR/trilium-install.sh"
     
     info "下载最新版本脚本..."
     if command -v wget &> /dev/null; then
