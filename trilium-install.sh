@@ -1,8 +1,9 @@
 #!/bin/bash
 
-# Trilium Notes Docker 一键安装脚本
+# Trilium Notes Docker 一键安装脚本 - 优化版
 # 支持交互式配置，包括Cloudflare证书配置
 # 已切换镜像源到 triliumnext/notes，并默认使用 latest 版本
+# 集成智能修复功能，预防和解决Docker Compose ContainerConfig错误
 
 set -e
 
@@ -37,8 +38,8 @@ COMPOSE_CMD=""  # 用于存储正确的compose命令
 show_banner() {
     clear
     echo -e "${PURPLE}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${PURPLE}║${WHITE}                    Trilium Notes Docker 一键安装脚本                      ${PURPLE}║${NC}"
-    echo -e "${PURPLE}║${WHITE}                          支持 Cloudflare 证书                           ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${WHITE}                  Trilium Notes Docker 一键安装脚本 - 优化版              ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${WHITE}                    支持 Cloudflare 证书 & 智能错误修复                  ${PURPLE}║${NC}"
     echo -e "${PURPLE}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
     echo
 }
@@ -219,7 +220,7 @@ show_management_panel() {
     echo -e "${WHITE}3)${NC} 重启服务"
     echo -e "${WHITE}4)${NC} 查看服务状态"
     echo -e "${WHITE}5)${NC} 查看实时日志"
-    echo -e "${WHITE}6)${NC} 更新Trilium版本"
+    echo -e "${WHITE}6)${NC} 智能更新Trilium版本"
     echo -e "${WHITE}7)${NC} 备份数据"
     echo -e "${WHITE}8)${NC} 恢复数据"
     echo -e "${WHITE}9)${NC} 重新配置/重新安装"
@@ -290,6 +291,261 @@ show_management_panel() {
     done
 }
 
+# 智能更新函数 - 包含错误修复
+update_trilium_with_fix() {
+    info "智能更新Trilium到最新版本..."
+    
+    # 先创建备份
+    info "创建数据备份..."
+    local backup_dir="/backup/trilium"
+    local date=$(date +%Y%m%d_%H%M%S)
+    local backup_file="trilium-backup-before-update-$date.tar.gz"
+    
+    mkdir -p "$backup_dir"
+    
+    if eval "$COMPOSE_CMD ps" | grep -q "trilium.*Up"; then
+        eval "$COMPOSE_CMD exec trilium tar -czf \"/tmp/$backup_file\" -C /home/node/trilium-data ."
+        docker cp $(eval "$COMPOSE_CMD ps -q trilium"):/tmp/$backup_file "$backup_dir/"
+        eval "$COMPOSE_CMD exec trilium rm \"/tmp/$backup_file\"" 2>/dev/null || true
+        success "数据备份完成: $backup_dir/$backup_file"
+    else
+        warning "服务未运行，跳过在线备份，使用本地文件备份"
+        if [[ -d "$DATA_DIR" ]]; then
+            tar -czf "$backup_dir/$backup_file" -C "$DATA_DIR" . 2>/dev/null || true
+            success "本地数据备份完成: $backup_dir/$backup_file"
+        fi
+    fi
+    
+    # 尝试正常更新
+    info "拉取最新镜像..."
+    if eval "$COMPOSE_CMD pull"; then
+        info "镜像拉取成功，开始更新容器..."
+        if eval "$COMPOSE_CMD up -d"; then
+            success "更新完成！"
+            return 0
+        else
+            warning "标准更新失败，开始智能修复..."
+        fi
+    else
+        error "镜像拉取失败"
+        return 1
+    fi
+    
+    # 如果正常更新失败，开始修复流程
+    show_update_fix_menu
+}
+
+# 更新修复菜单
+show_update_fix_menu() {
+    echo
+    echo -e "${YELLOW}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${YELLOW}║${WHITE}            更新失败 - 智能修复选项                          ${YELLOW}║${NC}"
+    echo -e "${YELLOW}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    echo -e "${RED}检测到更新失败，可能是 ContainerConfig 错误${NC}"
+    echo
+    echo "请选择修复方案:"
+    echo -e "${WHITE}1)${NC} 强制重新创建容器 (推荐，最安全)"
+    echo -e "${WHITE}2)${NC} 升级到 Docker Compose V2 并重试"
+    echo -e "${WHITE}3)${NC} 完全清理 Docker 系统并重建"
+    echo -e "${WHITE}4)${NC} 手动修复指导"
+    echo -e "${WHITE}0)${NC} 取消修复"
+    echo
+    
+    while true; do
+        read -p "请选择修复方案 (0-4): " choice
+        
+        case $choice in
+            1)
+                fix_force_recreate
+                break
+                ;;
+            2)
+                fix_upgrade_compose_v2
+                break
+                ;;
+            3)
+                fix_complete_cleanup
+                break
+                ;;
+            4)
+                show_manual_fix_guide
+                break
+                ;;
+            0)
+                warning "修复已取消，Trilium 可能仍处于异常状态"
+                return 1
+                ;;
+            *)
+                error "无效选择，请输入0-4"
+                ;;
+        esac
+    done
+}
+
+# 修复方案1：强制重新创建
+fix_force_recreate() {
+    info "执行方案1: 强制重新创建容器"
+    
+    # 停止并删除所有容器
+    info "停止并删除现有容器..."
+    eval "$COMPOSE_CMD down --volumes --remove-orphans" 2>/dev/null || true
+    
+    # 清理残留容器
+    info "清理残留容器..."
+    local project_name=$(basename "$INSTALL_DIR")
+    docker ps -a --filter "label=com.docker.compose.project=${project_name}" --format "{{.ID}}" 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
+    docker ps -a --filter "label=com.docker.compose.project=trilium" --format "{{.ID}}" 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
+    
+    # 重新创建并启动
+    info "重新创建并启动服务..."
+    if eval "$COMPOSE_CMD up -d --force-recreate"; then
+        success "容器重新创建成功！"
+        
+        # 等待服务启动
+        info "等待服务启动..."
+        sleep 10
+        
+        # 检查服务状态
+        if eval "$COMPOSE_CMD ps" | grep -q "Up"; then
+            success "Trilium服务启动成功！"
+        else
+            warning "服务启动可能有问题，请检查日志"
+            eval "$COMPOSE_CMD logs --tail=20"
+        fi
+    else
+        error "重新创建失败"
+        return 1
+    fi
+}
+
+# 修复方案2：升级到 Docker Compose V2
+fix_upgrade_compose_v2() {
+    info "执行方案2: 升级到 Docker Compose V2"
+    
+    # 检查是否已经是 V2
+    if docker compose version &> /dev/null; then
+        success "已经在使用 Docker Compose V2"
+        COMPOSE_CMD="docker compose"
+    else
+        warning "正在升级到 Docker Compose V2..."
+        
+        # 安装 Docker Compose V2 插件
+        if command -v apt-get &> /dev/null; then
+            apt-get update
+            apt-get install -y docker-compose-plugin
+        elif command -v yum &> /dev/null; then
+            yum install -y docker-compose-plugin
+        else
+            # 手动安装
+            info "手动安装 Docker Compose V2..."
+            COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest 2>/dev/null | grep 'tag_name' | cut -d\" -f4 || echo "v2.21.0")
+            mkdir -p ~/.docker/cli-plugins/
+            curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" -o ~/.docker/cli-plugins/docker-compose 2>/dev/null
+            chmod +x ~/.docker/cli-plugins/docker-compose
+        fi
+        
+        if docker compose version &> /dev/null; then
+            success "Docker Compose V2 安装成功"
+            COMPOSE_CMD="docker compose"
+        else
+            error "Docker Compose V2 安装失败，回退到强制重新创建"
+            fix_force_recreate
+            return $?
+        fi
+    fi
+    
+    # 使用新的命令重新创建
+    fix_force_recreate
+}
+
+# 修复方案3：完全清理
+fix_complete_cleanup() {
+    info "执行方案3: 完全清理 Docker 系统并重建"
+    
+    echo
+    echo -e "${RED}警告: 这将清理所有未使用的 Docker 资源！${NC}"
+    echo "这包括："
+    echo "• 所有停止的容器"
+    echo "• 所有未使用的网络"
+    echo "• 所有未使用的镜像"
+    echo "• 所有未使用的构建缓存"
+    echo
+    read -p "确认继续? (y/N): " confirm
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        info "操作已取消"
+        return 1
+    fi
+    
+    # 停止服务
+    info "停止 Trilium 服务..."
+    eval "$COMPOSE_CMD down" 2>/dev/null || true
+    
+    # 清理 Docker 系统
+    info "清理 Docker 系统..."
+    docker system prune -af
+    docker volume prune -f 2>/dev/null || true
+    docker network prune -f 2>/dev/null || true
+    
+    # 重新拉取镜像
+    info "重新拉取镜像..."
+    eval "$COMPOSE_CMD pull"
+    
+    # 重新启动
+    info "重新启动服务..."
+    if eval "$COMPOSE_CMD up -d"; then
+        success "清理重建完成！"
+        
+        # 等待服务启动
+        info "等待服务启动..."
+        sleep 10
+        
+        # 检查服务状态
+        if eval "$COMPOSE_CMD ps" | grep -q "Up"; then
+            success "Trilium服务启动成功！"
+        else
+            warning "服务启动可能有问题，请检查日志"
+        fi
+    else
+        error "重新启动失败"
+        return 1
+    fi
+}
+
+# 手动修复指导
+show_manual_fix_guide() {
+    echo
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${WHITE}                    手动修复指导                            ${CYAN}║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    echo -e "${WHITE}如果自动修复不起作用，请手动执行以下步骤：${NC}"
+    echo
+    echo -e "${YELLOW}步骤 1: 进入安装目录${NC}"
+    echo "cd $INSTALL_DIR"
+    echo
+    echo -e "${YELLOW}步骤 2: 完全停止服务${NC}"
+    echo "$COMPOSE_CMD down --volumes --remove-orphans"
+    echo
+    echo -e "${YELLOW}步骤 3: 清理残留容器${NC}"
+    echo "docker ps -a --filter \"label=com.docker.compose.project=trilium\" --format \"{{.ID}}\" | xargs -r docker rm -f"
+    echo
+    echo -e "${YELLOW}步骤 4: 拉取最新镜像${NC}"
+    echo "$COMPOSE_CMD pull"
+    echo
+    echo -e "${YELLOW}步骤 5: 强制重新创建${NC}"
+    echo "$COMPOSE_CMD up -d --force-recreate"
+    echo
+    echo -e "${WHITE}如果问题仍然存在，请考虑：${NC}"
+    echo "• 升级到 Docker Compose V2: apt install docker-compose-plugin"
+    echo "• 检查磁盘空间是否充足"
+    echo "• 查看详细错误日志: $COMPOSE_CMD logs"
+    echo "• 重启 Docker 服务: systemctl restart docker"
+    echo
+    read -p "按回车键返回..."
+}
+
 # 服务管理函数
 manage_service() {
     local action=$1
@@ -332,14 +588,7 @@ manage_service() {
             eval "$COMPOSE_CMD logs -f"
             ;;
         "update")
-            info "更新Trilium到最新版本..."
-            eval "$COMPOSE_CMD pull"
-            eval "$COMPOSE_CMD up -d"
-            if [[ $? -eq 0 ]]; then
-                success "更新完成！"
-            else
-                error "更新失败"
-            fi
+            update_trilium_with_fix
             ;;
         "backup")
             backup_data
@@ -446,35 +695,35 @@ check_requirements() {
         fi
     fi
     
-    # 检查Docker Compose
+    # 检查Docker Compose (优先使用V2)
     check_docker_compose
 }
 
-# 检查并安装Docker Compose
+# 检查并安装Docker Compose (优化版本，优先V2)
 check_docker_compose() {
     local has_compose_plugin=false
     local has_compose_standalone=false
     
-    # 检查Docker Compose插件 (新版本)
+    # 检查Docker Compose插件 (V2 - 优先选择)
     if docker compose version &> /dev/null; then
         has_compose_plugin=true
         COMPOSE_CMD="docker compose"
-        success "Docker Compose插件已安装"
+        success "Docker Compose V2 插件已安装 (推荐)"
     fi
     
-    # 检查独立的Docker Compose (旧版本)
+    # 检查独立的Docker Compose (V1)
     if command -v docker-compose &> /dev/null; then
         has_compose_standalone=true
         if [[ "$has_compose_plugin" == false ]]; then
             COMPOSE_CMD="docker-compose"
-            success "Docker Compose (独立版本) 已安装"
+            warning "使用 Docker Compose V1 (建议升级到V2以避免已知bug)"
         fi
     fi
     
-    # 如果都没有安装，则安装
+    # 如果都没有安装，优先安装V2
     if [[ "$has_compose_plugin" == false && "$has_compose_standalone" == false ]]; then
-        warning "Docker Compose未安装，正在安装..."
-        install_docker_compose
+        warning "Docker Compose未安装，正在安装Docker Compose V2..."
+        install_docker_compose_v2
     fi
     
     # 验证最终的命令
@@ -482,6 +731,64 @@ check_docker_compose() {
         error "Docker Compose安装验证失败"
         exit 1
     fi
+    
+    # 提醒用户升级V1到V2
+    if [[ "$COMPOSE_CMD" == "docker-compose" ]]; then
+        echo
+        warning "您正在使用 Docker Compose V1，建议升级到 V2 以获得更好的稳定性"
+        echo "升级方法: apt install docker-compose-plugin"
+        read -p "现在升级到 V2 吗? (y/N): " upgrade_now
+        if [[ "$upgrade_now" =~ ^[Yy]$ ]]; then
+            install_docker_compose_v2
+        fi
+    fi
+}
+
+# 优先安装Docker Compose V2
+install_docker_compose_v2() {
+    info "安装Docker Compose V2..."
+    
+    # 通过包管理器安装V2插件
+    if command -v apt-get &> /dev/null; then
+        apt-get update
+        apt-get install -y docker-compose-plugin
+        if docker compose version &> /dev/null; then
+            COMPOSE_CMD="docker compose"
+            success "Docker Compose V2 安装成功"
+            return 0
+        fi
+    elif command -v yum &> /dev/null; then
+        yum install -y docker-compose-plugin
+        if docker compose version &> /dev/null; then
+            COMPOSE_CMD="docker compose"
+            success "Docker Compose V2 安装成功"
+            return 0
+        fi
+    fi
+    
+    # 备用方案：手动安装V2
+    info "通过官方发布版本安装Docker Compose V2..."
+    
+    COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest 2>/dev/null | grep 'tag_name' | cut -d\" -f4)
+    
+    if [[ -z "$COMPOSE_VERSION" ]]; then
+        warning "无法获取最新版本，使用固定版本"
+        COMPOSE_VERSION="v2.21.0"
+    fi
+    
+    mkdir -p ~/.docker/cli-plugins/
+    curl -SL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-x86_64" -o ~/.docker/cli-plugins/docker-compose 2>/dev/null
+    chmod +x ~/.docker/cli-plugins/docker-compose
+    
+    if docker compose version &> /dev/null; then
+        COMPOSE_CMD="docker compose"
+        success "Docker Compose V2 安装成功"
+        return 0
+    fi
+    
+    # 如果V2安装失败，回退到V1
+    warning "Docker Compose V2 安装失败，回退到 V1"
+    install_docker_compose_v1
 }
 
 # 安装Docker
@@ -507,7 +814,7 @@ install_docker() {
         "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
         $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
     
-    # 安装Docker Engine
+    # 安装Docker Engine (包含V2插件)
     apt-get update
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
     
@@ -518,9 +825,9 @@ install_docker() {
     success "Docker安装完成"
 }
 
-# 安装Docker Compose
-install_docker_compose() {
-    info "安装Docker Compose..."
+# Docker Compose V1 安装 (备用方案)
+install_docker_compose_v1() {
+    info "安装Docker Compose V1 (备用方案)..."
     
     # 通过包管理器安装
     if command -v apt-get &> /dev/null; then
@@ -528,13 +835,13 @@ install_docker_compose() {
         apt-get install -y docker-compose
         if command -v docker-compose &> /dev/null; then
             COMPOSE_CMD="docker-compose"
-            success "Docker Compose安装成功"
-            return
+            success "Docker Compose V1 安装成功"
+            return 0
         fi
     fi
     
     # 备用方案：直接下载安装
-    info "通过官方发布版本安装Docker Compose..."
+    info "通过官方发布版本安装Docker Compose V1..."
     
     COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep 'tag_name' | cut -d\" -f4)
     
@@ -549,7 +856,7 @@ install_docker_compose() {
     
     if command -v docker-compose &> /dev/null && docker-compose version &> /dev/null; then
         COMPOSE_CMD="docker-compose"
-        success "Docker Compose安装成功"
+        success "Docker Compose V1 安装成功"
     else
         error "Docker Compose安装失败"
         exit 1
@@ -937,15 +1244,13 @@ EOF
     success "Nginx配置生成完成"
 }
 
-# 生成Docker Compose配置
+# 生成Docker Compose配置 (移除version字段，避免警告)
 generate_docker_compose() {
     info "生成Docker Compose配置..."
     
     if [[ "$USE_SSL" == false ]]; then
         # HTTP only配置
         cat > "$INSTALL_DIR/docker-compose.yml" << EOF
-version: '3.8'
-
 services:
   trilium:
     image: triliumnext/notes:${TRILIUM_VERSION}
@@ -976,8 +1281,6 @@ EOF
     elif [[ "$SSL_TYPE" == "letsencrypt" ]]; then
         # Let's Encrypt配置
         cat > "$INSTALL_DIR/docker-compose.yml" << EOF
-version: '3.8'
-
 services:
   trilium:
     image: triliumnext/notes:${TRILIUM_VERSION}
@@ -1019,8 +1322,6 @@ EOF
     elif [[ "$SSL_TYPE" == "cloudflare" ]]; then
         # Cloudflare证书配置
         cat > "$INSTALL_DIR/docker-compose.yml" << EOF
-version: '3.8'
-
 services:
   trilium:
     image: triliumnext/notes:${TRILIUM_VERSION}
@@ -1170,6 +1471,7 @@ show_result() {
     echo -e "  停止服务: ${CYAN}cd $INSTALL_DIR && $COMPOSE_CMD down${NC}"
     echo -e "  查看日志: ${CYAN}cd $INSTALL_DIR && $COMPOSE_CMD logs -f${NC}"
     echo -e "  重启服务: ${CYAN}cd $INSTALL_DIR && $COMPOSE_CMD restart${NC}"
+    echo -e "  智能管理: ${CYAN}trilium${NC}"
     
     echo
     echo -e "${WHITE}数据目录:${NC} ${CYAN}$DATA_DIR${NC}"
@@ -1190,25 +1492,50 @@ show_result() {
     success "Trilium Notes已成功部署!"
 }
 
-# 创建管理脚本
+# 创建管理脚本 (支持智能修复)
 create_management_script() {
     info "创建管理脚本..."
     
     cat > "$INSTALL_DIR/trilium-manage.sh" << 'EOF'
 #!/bin/bash
 
+# Trilium Docker 智能管理脚本
 INSTALL_DIR="/opt/trilium"
 cd "$INSTALL_DIR"
 
 # 检测可用的compose命令
-if command -v docker-compose &> /dev/null; then
-    COMPOSE_CMD="docker-compose"
-elif docker compose version &> /dev/null; then
+if docker compose version &> /dev/null; then
     COMPOSE_CMD="docker compose"
+elif command -v docker-compose &> /dev/null; then
+    COMPOSE_CMD="docker-compose"
 else
     echo "错误: 未找到docker-compose或docker compose命令"
     exit 1
 fi
+
+# 智能修复函数
+smart_fix() {
+    echo "开始智能修复..."
+    
+    # 停止并删除容器
+    echo "停止并删除现有容器..."
+    eval "$COMPOSE_CMD down --volumes --remove-orphans" 2>/dev/null || true
+    
+    # 清理残留容器
+    echo "清理残留容器..."
+    docker ps -a --filter "label=com.docker.compose.project=trilium" --format "{{.ID}}" 2>/dev/null | xargs -r docker rm -f 2>/dev/null || true
+    
+    # 重新创建
+    echo "重新创建并启动服务..."
+    eval "$COMPOSE_CMD up -d --force-recreate"
+    
+    if [[ $? -eq 0 ]]; then
+        echo "修复完成!"
+    else
+        echo "修复失败，请检查日志"
+        eval "$COMPOSE_CMD logs"
+    fi
+}
 
 case "$1" in
     start)
@@ -1234,7 +1561,15 @@ case "$1" in
     update)
         echo "更新Trilium..."
         eval "$COMPOSE_CMD pull"
-        eval "$COMPOSE_CMD up -d"
+        if eval "$COMPOSE_CMD up -d"; then
+            echo "更新成功!"
+        else
+            echo "更新失败，尝试智能修复..."
+            smart_fix
+        fi
+        ;;
+    fix)
+        smart_fix
         ;;
     backup)
         echo "备份Trilium数据..."
@@ -1277,9 +1612,9 @@ case "$1" in
         fi
         ;;
     *)
-        echo "Trilium Docker 管理脚本"
+        echo "Trilium Docker 智能管理脚本 - 优化版"
         echo
-        echo "使用方法: $0 {start|stop|restart|logs|status|update|backup|restore}"
+        echo "使用方法: $0 {start|stop|restart|logs|status|update|fix|backup|restore}"
         echo
         echo "命令说明:"
         echo "  start   - 启动服务"
@@ -1287,9 +1622,15 @@ case "$1" in
         echo "  restart - 重启服务"
         echo "  logs    - 查看日志"
         echo "  status  - 查看状态"
-        echo "  update  - 更新到最新版本"
+        echo "  update  - 智能更新到最新版本"
+        echo "  fix     - 智能修复 ContainerConfig 等错误"
         echo "  backup  - 备份数据"
         echo "  restore - 恢复数据"
+        echo
+        echo "智能功能:"
+        echo "• 自动检测 Docker Compose 版本"
+        echo "• 更新失败时自动尝试修复"
+        echo "• 支持强制重新创建容器"
         echo
         exit 1
         ;;
@@ -1301,7 +1642,8 @@ EOF
     # 创建系统级别的命令链接
     ln -sf "$INSTALL_DIR/trilium-manage.sh" /usr/local/bin/trilium
     
-    success "管理脚本创建完成"
+    success "智能管理脚本创建完成"
+    info "现在可以使用 'trilium' 命令进行管理"
 }
 
 # 主安装流程
@@ -1310,11 +1652,11 @@ main() {
     
     # 检查是否已安装
     if check_existing_installation; then
-        # 检测compose命令
-        if command -v docker-compose &> /dev/null; then
-            COMPOSE_CMD="docker-compose"
-        elif docker compose version &> /dev/null; then
+        # 智能检测compose命令
+        if docker compose version &> /dev/null; then
             COMPOSE_CMD="docker compose"
+        elif command -v docker-compose &> /dev/null; then
+            COMPOSE_CMD="docker-compose"
         else
             error "未找到docker-compose命令"
             exit 1
