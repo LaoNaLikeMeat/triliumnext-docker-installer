@@ -187,113 +187,304 @@ uninstall_trilium() {
     exit 0
 }
 
-# 显示管理面板
-show_management_panel() {
+# 显示主菜单
+show_main_menu() {
     clear
-    echo -e "${GREEN}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║${WHITE}                    Trilium Notes 管理面板                               ${GREEN}║${NC}"
-    echo -e "${GREEN}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo -e "${PURPLE}╔══════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${PURPLE}║${WHITE}                  Trilium Notes Docker 管理工具 - 优化版                  ${PURPLE}║${NC}"
+    echo -e "${PURPLE}║${WHITE}                    支持 Cloudflare 证书 & 智能错误修复                  ${PURPLE}║${NC}"
+    echo -e "${PURPLE}╚══════════════════════════════════════════════════════════════════════════╝${NC}"
     echo
     
-    # 检查服务状态
-    cd "$INSTALL_DIR"
-    if eval "$COMPOSE_CMD ps" 2>/dev/null | grep -q "Up"; then
-        echo -e "${GREEN}● 服务状态: 运行中${NC}"
-    else
-        echo -e "${RED}● 服务状态: 已停止${NC}"
-    fi
-    
-    # 显示访问信息
-    if [[ -f "$CONFIG_DIR/nginx/nginx.conf" ]]; then
-        local domain=$(grep "server_name" "$CONFIG_DIR/nginx/nginx.conf" | head -1 | awk '{print $2}' | sed 's/;//')
-        if grep -q "listen 443" "$CONFIG_DIR/nginx/nginx.conf"; then
-            echo -e "${WHITE}● 访问地址: ${GREEN}https://$domain${NC}"
+    # 检测是否已安装
+    if check_existing_installation; then
+        echo -e "${GREEN}● Trilium 状态: 已安装${NC}"
+        
+        # 检测compose命令
+        if docker compose version &> /dev/null; then
+            COMPOSE_CMD="docker compose"
+        elif command -v docker-compose &> /dev/null; then
+            COMPOSE_CMD="docker-compose"
         else
-            echo -e "${WHITE}● 访问地址: ${GREEN}http://$domain${NC}"
+            echo -e "${RED}● Docker Compose: 未找到${NC}"
         fi
+        
+        # 检查服务状态
+        if [[ -n "$COMPOSE_CMD" ]]; then
+            cd "$INSTALL_DIR"
+            if eval "$COMPOSE_CMD ps" 2>/dev/null | grep -q "Up"; then
+                echo -e "${GREEN}● 服务状态: 运行中${NC}"
+            else
+                echo -e "${RED}● 服务状态: 已停止${NC}"
+            fi
+            
+            # 显示访问信息
+            if [[ -f "$CONFIG_DIR/nginx/nginx.conf" ]]; then
+                local domain=$(grep "server_name" "$CONFIG_DIR/nginx/nginx.conf" | head -1 | awk '{print $2}' | sed 's/;//')
+                if grep -q "listen 443" "$CONFIG_DIR/nginx/nginx.conf"; then
+                    echo -e "${WHITE}● 访问地址: ${GREEN}https://$domain${NC}"
+                else
+                    echo -e "${WHITE}● 访问地址: ${GREEN}http://$domain${NC}"
+                fi
+            fi
+        fi
+    else
+        echo -e "${YELLOW}● Trilium 状态: 未安装${NC}"
     fi
     
     echo
     echo -e "${WHITE}请选择操作:${NC}"
-    echo -e "${WHITE}1)${NC} 启动服务"
-    echo -e "${WHITE}2)${NC} 停止服务"
-    echo -e "${WHITE}3)${NC} 重启服务"
-    echo -e "${WHITE}4)${NC} 查看服务状态"
-    echo -e "${WHITE}5)${NC} 查看实时日志"
-    echo -e "${WHITE}6)${NC} 智能更新Trilium版本"
-    echo -e "${WHITE}7)${NC} 备份数据"
-    echo -e "${WHITE}8)${NC} 恢复数据"
-    echo -e "${WHITE}9)${NC} 更新安装脚本"
-    echo -e "${WHITE}10)${NC} 重新配置/重新安装"
-    echo -e "${WHITE}11)${NC} 完全卸载Trilium"
-    echo -e "${WHITE}0)${NC} 退出"
+    
+    if check_existing_installation; then
+        # 已安装 - 显示管理选项
+        echo -e "${WHITE}=== 服务管理 ===${NC}"
+        echo -e "${WHITE}1)${NC} 启动服务"
+        echo -e "${WHITE}2)${NC} 停止服务"
+        echo -e "${WHITE}3)${NC} 重启服务"
+        echo -e "${WHITE}4)${NC} 查看服务状态"
+        echo -e "${WHITE}5)${NC} 查看实时日志"
+        echo
+        echo -e "${WHITE}=== 更新维护 ===${NC}"
+        echo -e "${WHITE}6)${NC} 智能更新Trilium版本"
+        echo -e "${WHITE}7)${NC} 备份数据"
+        echo -e "${WHITE}8)${NC} 恢复数据"
+        echo -e "${WHITE}9)${NC} 更新安装脚本"
+        echo
+        echo -e "${WHITE}=== 系统配置 ===${NC}"
+        echo -e "${WHITE}10)${NC} 重新配置/重新安装"
+        echo -e "${WHITE}11)${NC} 完全卸载Trilium"
+        echo
+        echo -e "${WHITE}0)${NC} 退出"
+    else
+        # 未安装 - 显示安装选项
+        echo -e "${WHITE}=== 安装选项 ===${NC}"
+        echo -e "${WHITE}1)${NC} 一键安装 Trilium Notes"
+        echo -e "${WHITE}2)${NC} 检查系统要求"
+        echo -e "${WHITE}3)${NC} 更新安装脚本"
+        echo
+        echo -e "${WHITE}0)${NC} 退出"
+    fi
     echo
     
-    while true; do
-        read -p "请选择操作 (0-11): " choice
+    handle_main_menu_choice
+}
+
+# 处理主菜单选择
+handle_main_menu_choice() {
+    if check_existing_installation; then
+        # 已安装的菜单处理
+        while true; do
+            read -p "请选择操作 (0-11): " choice
+            
+            case $choice in
+                1)
+                    manage_service "start"
+                    break
+                    ;;
+                2)
+                    manage_service "stop"
+                    break
+                    ;;
+                3)
+                    manage_service "restart"
+                    break
+                    ;;
+                4)
+                    manage_service "status"
+                    break
+                    ;;
+                5)
+                    manage_service "logs"
+                    break
+                    ;;
+                6)
+                    manage_service "update"
+                    break
+                    ;;
+                7)
+                    manage_service "backup"
+                    break
+                    ;;
+                8)
+                    manage_service "restore"
+                    break
+                    ;;
+                9)
+                    update_script
+                    break
+                    ;;
+                10)
+                    echo
+                    echo -e "${YELLOW}警告: 这将重新配置Trilium，现有配置将被覆盖！${NC}"
+                    read -p "确认继续重新安装? (y/N): " confirm
+                    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                        start_installation_process
+                    else
+                        show_main_menu
+                    fi
+                    break
+                    ;;
+                11)
+                    uninstall_trilium
+                    break
+                    ;;
+                0)
+                    echo
+                    success "感谢使用 Trilium Docker 管理工具！"
+                    exit 0
+                    ;;
+                *)
+                    error "无效选择，请输入0-11"
+                    ;;
+            esac
+        done
+    else
+        # 未安装的菜单处理
+        while true; do
+            read -p "请选择操作 (0-3): " choice
+            
+            case $choice in
+                1)
+                    start_installation_process
+                    break
+                    ;;
+                2)
+                    check_system_requirements_only
+                    break
+                    ;;
+                3)
+                    update_script
+                    break
+                    ;;
+                0)
+                    echo
+                    success "感谢使用 Trilium Docker 管理工具！"
+                    exit 0
+                    ;;
+                *)
+                    error "无效选择，请输入0-3"
+                    ;;
+            esac
+        done
+    fi
+}
+
+# 开始安装流程
+start_installation_process() {
+    show_banner
+    info "开始 Trilium Notes 安装流程..."
+    
+    # 检查环境
+    check_root
+    check_requirements
+    
+    echo
+    read -p "系统检查完成，按回车键继续安装..."
+    
+    # 交互式配置
+    configure_domain
+    configure_ssl
+    configure_ports
+    configure_admin_password
+    
+    # 创建安装环境
+    create_directories
+    generate_nginx_config
+    generate_docker_compose
+    create_management_script
+    
+    # 配置系统
+    configure_firewall
+    
+    # 启动服务
+    start_services
+    
+    # 显示结果
+    show_result
+    
+    # 安装完成后返回主菜单
+    echo
+    read -p "按回车键返回主菜单..."
+    show_main_menu
+}
+
+# 仅检查系统要求
+check_system_requirements_only() {
+    echo
+    echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║${WHITE}                    系统要求检查                            ${CYAN}║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo
+    
+    info "正在检查系统要求..."
+    
+    # 检查操作系统
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        success "操作系统: $PRETTY_NAME"
+    else
+        error "无法识别操作系统"
+    fi
+    
+    # 检查内存
+    if command -v free &> /dev/null; then
+        local mem_total=$(free -h | grep "Mem:" | awk '{print $2}')
+        info "系统内存: $mem_total"
+    fi
+    
+    # 检查磁盘空间
+    if command -v df &> /dev/null; then
+        local disk_space=$(df -h / | tail -1 | awk '{print $4}')
+        info "可用磁盘空间: $disk_space"
+    fi
+    
+    # 检查Docker
+    if command -v docker &> /dev/null; then
+        local docker_version=$(docker --version 2>/dev/null || echo "未知版本")
+        success "Docker: $docker_version"
         
-        case $choice in
-            1)
-                manage_service "start"
-                break
-                ;;
-            2)
-                manage_service "stop"
-                break
-                ;;
-            3)
-                manage_service "restart"
-                break
-                ;;
-            4)
-                manage_service "status"
-                break
-                ;;
-            5)
-                manage_service "logs"
-                break
-                ;;
-            6)
-                manage_service "update"
-                break
-                ;;
-            7)
-                manage_service "backup"
-                break
-                ;;
-            8)
-                manage_service "restore"
-                break
-                ;;
-            9)
-                update_script
-                break
-                ;;
-            10)
-                echo
-                echo -e "${YELLOW}警告: 这将重新配置Trilium，现有配置将被覆盖！${NC}"
-                read -p "确认继续重新安装? (y/N): " confirm
-                if [[ "$confirm" =~ ^[Yy]$ ]]; then
-                    return 1  # 返回1表示重新安装
-                else
-                    show_management_panel
-                    return 0
-                fi
-                ;;
-            11)
-                uninstall_trilium
-                break
-                ;;
-            0)
-                echo
-                success "感谢使用 Trilium Docker 安装脚本！"
-                exit 0
-                ;;
-            *)
-                error "无效选择，请输入0-11"
-                ;;
-        esac
+        if systemctl is-active --quiet docker; then
+            success "Docker服务: 运行中"
+        else
+            warning "Docker服务: 未运行"
+        fi
+    else
+        warning "Docker: 未安装"
+    fi
+    
+    # 检查Docker Compose
+    if docker compose version &> /dev/null; then
+        local compose_version=$(docker compose version --short 2>/dev/null || echo "未知版本")
+        success "Docker Compose V2: $compose_version (推荐)"
+    elif command -v docker-compose &> /dev/null; then
+        local compose_version=$(docker-compose --version 2>/dev/null | cut -d' ' -f3 | cut -d',' -f1 || echo "未知版本")
+        warning "Docker Compose V1: $compose_version (建议升级到V2)"
+    else
+        warning "Docker Compose: 未安装"
+    fi
+    
+    # 检查网络端口
+    info "检查端口占用情况..."
+    for port in 80 443 8080; do
+        if command -v netstat &> /dev/null; then
+            if netstat -tuln 2>/dev/null | grep -q ":$port "; then
+                warning "端口 $port: 已被占用"
+            else
+                success "端口 $port: 可用"
+            fi
+        elif command -v ss &> /dev/null; then
+            if ss -tuln 2>/dev/null | grep -q ":$port "; then
+                warning "端口 $port: 已被占用"
+            else
+                success "端口 $port: 可用"
+            fi
+        fi
     done
+    
+    echo
+    success "系统要求检查完成"
+    read -p "按回车键返回主菜单..."
+    show_main_menu
 }
 
 # 脚本更新功能
@@ -788,8 +979,8 @@ manage_service() {
     
     if [[ "$action" != "logs" ]]; then
         echo
-        read -p "按回车键返回管理面板..."
-        show_management_panel
+        read -p "按回车键返回主菜单..."
+        show_main_menu
     fi
 }
 
@@ -1836,61 +2027,8 @@ EOF
 
 # 主安装流程
 main() {
-    show_banner
-    
-    # 检查是否已安装
-    if check_existing_installation; then
-        # 智能检测compose命令
-        if docker compose version &> /dev/null; then
-            COMPOSE_CMD="docker compose"
-        elif command -v docker-compose &> /dev/null; then
-            COMPOSE_CMD="docker-compose"
-        else
-            error "未找到docker-compose命令"
-            exit 1
-        fi
-        
-        # 显示管理面板
-        if ! show_management_panel; then
-            # 用户选择重新安装，继续执行安装流程
-            info "开始重新配置..."
-        else
-            exit 0
-        fi
-    fi
-    
-    # 检查环境
-    check_root
-    check_requirements
-    
-    echo
-    read -p "系统检查完成，按回车键继续安装..."
-    
-    # 交互式配置
-    configure_domain
-    configure_ssl
-    configure_ports
-    configure_admin_password
-    
-    # 创建安装环境
-    create_directories
-    generate_nginx_config
-    generate_docker_compose
-    create_management_script
-    
-    # 配置系统
-    configure_firewall
-    
-    # 启动服务
-    start_services
-    
-    # 显示结果
-    show_result
-    
-    # 安装完成后显示管理面板
-    echo
-    read -p "按回车键进入管理面板..."
-    show_management_panel
+    # 直接显示主菜单，而不是先检查安装状态
+    show_main_menu
 }
 
 # 脚本入口
